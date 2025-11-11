@@ -1,0 +1,177 @@
+```mermaid
+graph TB
+    Start([Incoming Support Ticket]) --> Supervisor[Supervisor Agent]
+
+    Supervisor --> Classifier[Classifier Agent]
+    Classifier --> |Classification Result| Supervisor
+
+    Supervisor --> |Route Decision| RouteDecision{Decision Logic}
+
+    RouteDecision --> |Critical + Human Required| Escalation[Escalation Agent]
+    RouteDecision --> |Needs DB Operations| ToolExecutor[Tool Executor Agent]
+    RouteDecision --> |Knowledge Base Query| Resolver[Resolver Agent]
+    RouteDecision --> |Default| Resolver
+
+    ToolExecutor --> |Tool Results| Resolver
+
+    Resolver --> |RAG Search| VectorStore[(FAISS Vector Store)]
+    VectorStore --> |Top 3 Articles| Resolver
+
+    Resolver --> |Confidence Check| ConfidenceCheck{Confidence >= 0.5?}
+
+    ConfidenceCheck --> |Yes| ResolutionOutput[Resolution Output]
+    ConfidenceCheck --> |No| Escalation
+
+    ToolExecutor -.->|lookup_user| CultPassDB[(CultPass DB)]
+    ToolExecutor -.->|check_subscription| CultPassDB
+    ToolExecutor -.->|manage_reservation| CultPassDB
+    ToolExecutor -.->|process_refund| CultPassDB
+
+    Escalation --> EscalationOutput[Escalation Output]
+
+    ResolutionOutput --> Logger[Decision Logger]
+    EscalationOutput --> Logger
+
+    Logger --> Memory[(Long-term Memory)]
+    Logger --> End([Final Response])
+
+    Supervisor -.->|Session Context| SessionMemory[(Short-term Memory)]
+
+    style Supervisor fill:#ff6b6b
+    style Classifier fill:#4ecdc4
+    style Resolver fill:#45b7d1
+    style ToolExecutor fill:#96ceb4
+    style Escalation fill:#ffeaa7
+    style VectorStore fill:#dfe6e9
+    style CultPassDB fill:#dfe6e9
+    style Memory fill:#dfe6e9
+    style SessionMemory fill:#dfe6e9
+```
+
+## Detailed Component Interaction Flow
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Supervisor
+    participant Classifier
+    participant Resolver
+    participant ToolExecutor
+    participant Escalation
+    participant VectorDB
+    participant CultPassDB
+    participant Memory
+
+    User->>Supervisor: Submit Ticket
+    Supervisor->>Memory: Load Customer History
+    Memory-->>Supervisor: Past Interactions
+
+    Supervisor->>Classifier: Analyze Ticket
+    Classifier->>Classifier: Extract Type, Urgency, Sentiment
+    Classifier-->>Supervisor: Classification Result
+
+    alt Knowledge Base Path
+        Supervisor->>Resolver: Route for Resolution
+        Resolver->>VectorDB: Semantic Search
+        VectorDB-->>Resolver: Top 3 Articles
+        Resolver->>Resolver: Generate Response + Confidence
+
+        alt High Confidence (>= 0.5)
+            Resolver-->>Supervisor: Resolution + High Confidence
+            Supervisor->>User: Provide Resolution
+        else Low Confidence (< 0.5)
+            Resolver-->>Supervisor: Resolution + Low Confidence
+            Supervisor->>Escalation: Request Escalation
+            Escalation-->>Supervisor: Escalation Summary
+            Supervisor->>User: Escalation Notice
+        end
+
+    else Tool Execution Path
+        Supervisor->>ToolExecutor: Route for DB Operation
+        ToolExecutor->>CultPassDB: Execute Tool
+        CultPassDB-->>ToolExecutor: Tool Result
+        ToolExecutor->>Resolver: Format Response
+        Resolver-->>Supervisor: Formatted Resolution
+        Supervisor->>User: Provide Resolution
+
+    else Immediate Escalation Path
+        Supervisor->>Escalation: Critical Issue
+        Escalation-->>Supervisor: Escalation Summary
+        Supervisor->>User: Escalation Notice
+    end
+
+    Supervisor->>Memory: Store Interaction
+    Memory-->>Supervisor: Confirmed
+```
+
+## Agent State Flow
+
+```mermaid
+stateDiagram-v2
+    [*] --> Received: Ticket Arrives
+
+    Received --> Classifying: Supervisor Routes
+    Classifying --> Classified: Classification Complete
+
+    Classified --> Resolving: Knowledge Base Path
+    Classified --> ExecutingTool: Tool Execution Path
+    Classified --> Escalating: Critical/Complex Path
+
+    Resolving --> ConfidenceCheck: RAG Search Complete
+    ExecutingTool --> Resolving: Tool Result Ready
+
+    ConfidenceCheck --> Resolved: Confidence >= 0.5
+    ConfidenceCheck --> Escalating: Confidence < 0.5
+
+    Escalating --> Escalated: Summary Created
+
+    Resolved --> Logged: Log Decision
+    Escalated --> Logged: Log Decision
+
+    Logged --> [*]: Response Sent
+```
+
+## Data Flow Architecture
+
+```mermaid
+graph LR
+    subgraph Input Layer
+        A[Ticket + Metadata]
+        B[Customer History]
+    end
+
+    subgraph Processing Layer
+        C[Classifier]
+        D[Supervisor]
+        E[Resolver]
+        F[Tool Executor]
+        G[Escalation]
+    end
+
+    subgraph Data Layer
+        H[(Knowledge Base)]
+        I[(Vector Store)]
+        J[(CultPass DB)]
+        K[(UDA-Hub DB)]
+    end
+
+    subgraph Output Layer
+        L[Resolution]
+        M[Escalation]
+        N[Decision Log]
+    end
+
+    A --> C
+    B --> D
+    C --> D
+    D --> E
+    D --> F
+    D --> G
+    E <--> I
+    I <--> H
+    F <--> J
+    E --> L
+    G --> M
+    D --> N
+    N --> K
+```

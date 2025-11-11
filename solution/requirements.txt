@@ -1,0 +1,35 @@
+# Core dependencies
+python-dotenv>=1.1.1
+sqlalchemy>=2.0.41
+
+# LangChain and LangGraph
+langchain>=0.3.27
+langchain-core>=0.3.72
+langchain-openai>=0.3.28
+langgraph>=0.5.4
+langgraph-supervisor>=0.0.28
+
+# MCP adapters (optional, for enhanced tool integration)
+langchain-mcp-adapters>=0.1.9
+fastmcp>=2.10.6
+
+# OpenAI for LLMs and embeddings
+openai>=1.12.0
+
+# Vector store
+faiss-cpu>=1.8.0
+numpy>=1.24.0
+
+# HTTP and networking
+httpx>=0.28.1
+
+# Jupyter support
+ipykernel>=6.30.0
+jupyter>=1.0.0
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+
+# Optional: Progress bars and utilities
+tqdm>=4.66.0
