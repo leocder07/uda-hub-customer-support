@@ -33,7 +33,8 @@ from utils import (
     check_repeated_issue,
     format_history_summary,
     save_interaction,
-    get_absolute_path
+    get_absolute_path,
+    log_decision
 )
 
 
@@ -67,6 +68,7 @@ def classify_node(state: AgentState) -> AgentState:
     """
     Classification node - analyzes ticket and extracts information.
     """
+    start_time = datetime.now()
     print("🔍 Classifier Agent: Analyzing ticket...")
 
     # Get the last human message
@@ -93,6 +95,17 @@ def classify_node(state: AgentState) -> AgentState:
           f"Urgency: {classification['urgency']}, "
           f"Sentiment: {classification['sentiment']}")
 
+    # Log the classification decision
+    execution_time = (datetime.now() - start_time).total_seconds()
+    log_decision(
+        log_file="logs/agent_decisions.jsonl",
+        ticket_id=state.get("ticket_id", "unknown"),
+        agent_name="classifier",
+        input_data={"message": user_message, "customer_history": customer_history_text},
+        output_data=classification,
+        execution_time=execution_time
+    )
+
     # Update decision log
     decision_log = state.get("decision_log", [])
     decision_log.append(f"Classified as {classification['ticket_type']} with {classification['urgency']} urgency")
@@ -108,6 +121,7 @@ def supervisor_route_node(state: AgentState) -> Literal["tool_executor", "resolv
     """
     Supervisor routing node - decides which agent to invoke next.
     """
+    start_time = datetime.now()
     print("🎯 Supervisor: Making routing decision...")
 
     classification = state.get("classification", {})
@@ -117,6 +131,17 @@ def supervisor_route_node(state: AgentState) -> Literal["tool_executor", "resolv
     next_agent = supervisor_agent.route_initial(classification, customer_history)
 
     print(f"   → Routing to: {next_agent}")
+
+    # Log the routing decision
+    execution_time = (datetime.now() - start_time).total_seconds()
+    log_decision(
+        log_file="logs/agent_decisions.jsonl",
+        ticket_id=state.get("ticket_id", "unknown"),
+        agent_name="supervisor_route",
+        input_data={"classification": classification, "has_customer_history": bool(customer_history)},
+        output_data={"next_agent": next_agent, "decision_log": state.get("decision_log", [])},
+        execution_time=execution_time
+    )
 
     # Update decision log
     decision_log = state.get("decision_log", [])
@@ -131,6 +156,7 @@ def resolver_node(state: AgentState) -> AgentState:
     """
     Resolver node - uses RAG to find and generate responses.
     """
+    start_time = datetime.now()
     print("💡 Resolver Agent: Searching knowledge base...")
 
     # Get user message
@@ -155,6 +181,22 @@ def resolver_node(state: AgentState) -> AgentState:
     print(f"   ✓ Confidence: {resolver_output['confidence']:.1%}, "
           f"Sources: {len(resolver_output['sources'])}")
 
+    # Log the resolver decision
+    execution_time = (datetime.now() - start_time).total_seconds()
+    log_decision(
+        log_file="logs/agent_decisions.jsonl",
+        ticket_id=state.get("ticket_id", "unknown"),
+        agent_name="resolver",
+        input_data={"query": user_message, "classification": classification, "has_tool_output": bool(tool_output)},
+        output_data={
+            "confidence": resolver_output['confidence'],
+            "sources": resolver_output['sources'],
+            "needs_escalation": resolver_output.get('needs_escalation', False),
+            "resolution_length": len(resolver_output.get('resolution', ''))
+        },
+        execution_time=execution_time
+    )
+
     # Update decision log
     decision_log = state.get("decision_log", [])
     decision_log.append(
@@ -174,6 +216,7 @@ def tool_executor_node(state: AgentState) -> AgentState:
     """
     Tool executor node - executes database operations.
     """
+    start_time = datetime.now()
     print("🔧 Tool Executor Agent: Executing database operations...")
 
     # Get user message
@@ -190,6 +233,22 @@ def tool_executor_node(state: AgentState) -> AgentState:
 
     print(f"   ✓ Executed {len(tool_output.get('tools_used', []))} tool(s)")
 
+    # Log the tool execution
+    execution_time = (datetime.now() - start_time).total_seconds()
+    log_decision(
+        log_file="logs/agent_decisions.jsonl",
+        ticket_id=state.get("ticket_id", "unknown"),
+        agent_name="tool_executor",
+        input_data={"query": user_message, "classification": classification},
+        output_data={
+            "tools_used": tool_output.get('tools_used', []),
+            "success": tool_output.get('success', False),
+            "summary": tool_output.get('summary', ''),
+            "tool_results": {k: v.get('success', False) for k, v in tool_output.get('tool_results', {}).items()}
+        },
+        execution_time=execution_time
+    )
+
     # Update decision log
     decision_log = state.get("decision_log", [])
     decision_log.append(f"Executed tools: {', '.join(tool_output.get('tools_used', ['none']))}")
@@ -205,6 +264,7 @@ def escalation_node(state: AgentState) -> AgentState:
     """
     Escalation node - creates escalation summary for human agent.
     """
+    start_time = datetime.now()
     print("⚠️  Escalation Agent: Creating escalation summary...")
 
     # Get user message
@@ -239,6 +299,22 @@ def escalation_node(state: AgentState) -> AgentState:
     print(f"   ✓ Priority: {escalation_output['priority']}, "
           f"Reason: {escalation_output['escalation_reason']}")
 
+    # Log the escalation decision
+    execution_time = (datetime.now() - start_time).total_seconds()
+    log_decision(
+        log_file="logs/agent_decisions.jsonl",
+        ticket_id=state.get("ticket_id", "unknown"),
+        agent_name="escalation",
+        input_data={"query": user_message, "classification": classification, "attempted_steps": decision_log},
+        output_data={
+            "priority": escalation_output['priority'],
+            "escalation_reason": escalation_output['escalation_reason'],
+            "recommended_actions": escalation_output.get('recommended_actions', []),
+            "customer_sentiment": escalation_output.get('customer_sentiment', 'unknown')
+        },
+        execution_time=execution_time
+    )
+
     # Create escalation message
     escalation_message = (
         f"This ticket has been escalated to a human agent.\n\n"
@@ -269,6 +345,7 @@ def supervisor_decide_node(state: AgentState) -> Literal["escalation", "end"]:
     """
     Supervisor decision node - decides if escalation needed or can resolve.
     """
+    start_time = datetime.now()
     print("🎯 Supervisor: Making final decision...")
 
     classification = state.get("classification", {})
@@ -285,6 +362,26 @@ def supervisor_decide_node(state: AgentState) -> Literal["escalation", "end"]:
     )
 
     print(f"   → Decision: {decision['status']}")
+
+    # Log the final decision
+    execution_time = (datetime.now() - start_time).total_seconds()
+    log_decision(
+        log_file="logs/agent_decisions.jsonl",
+        ticket_id=state.get("ticket_id", "unknown"),
+        agent_name="supervisor_decide",
+        input_data={
+            "has_resolver_output": bool(resolver_output),
+            "has_tool_output": bool(tool_output),
+            "resolver_confidence": resolver_output.get('confidence', 0.0) if resolver_output else 0.0
+        },
+        output_data={
+            "status": decision['status'],
+            "next_agent": decision['next_agent'],
+            "decision_log": decision.get('decision_log', []),
+            "has_final_response": bool(decision.get("final_response"))
+        },
+        execution_time=execution_time
+    )
 
     # Update state with decision
     if decision["status"] == "resolved" and decision.get("final_response"):

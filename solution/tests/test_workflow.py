@@ -254,5 +254,174 @@ def test_workflow_completes_successfully():
         pytest.fail(f"Workflow should not raise exception: {e}")
 
 
+@pytest.mark.integration
+def test_logging_creates_log_file():
+    """Test that decisions are logged to JSONL file."""
+    import os
+    import json
+
+    log_file = "logs/agent_decisions.jsonl"
+
+    # Remove existing log file if present
+    if os.path.exists(log_file):
+        os.remove(log_file)
+
+    ticket_id = f"test_{uuid.uuid4().hex[:8]}"
+    message = "I can't log in to my account"
+
+    result = process_ticket(
+        ticket_id=ticket_id,
+        user_message=message,
+        account_id="cultpass"
+    )
+
+    # Check that log file was created
+    assert os.path.exists(log_file), "Log file should be created"
+
+    # Read and parse log entries
+    with open(log_file, 'r') as f:
+        log_entries = [json.loads(line) for line in f if line.strip()]
+
+    # Should have multiple log entries (at least classifier, supervisor, resolver/escalation)
+    assert len(log_entries) >= 3, f"Expected at least 3 log entries, got {len(log_entries)}"
+
+    # Verify log structure
+    for entry in log_entries:
+        assert 'timestamp' in entry
+        assert 'ticket_id' in entry
+        assert 'agent_name' in entry
+        assert 'input' in entry
+        assert 'output' in entry
+        assert 'execution_time' in entry
+
+        # Verify ticket_id matches
+        assert entry['ticket_id'] == ticket_id
+
+
+@pytest.mark.integration
+def test_logging_includes_all_agents():
+    """Test that all invoked agents are logged."""
+    import os
+    import json
+
+    log_file = "logs/agent_decisions.jsonl"
+
+    # Remove existing log file
+    if os.path.exists(log_file):
+        os.remove(log_file)
+
+    ticket_id = f"test_{uuid.uuid4().hex[:8]}"
+    message = "What's included in my subscription?"
+
+    result = process_ticket(
+        ticket_id=ticket_id,
+        user_message=message,
+        account_id="cultpass"
+    )
+
+    # Read log entries for this ticket
+    with open(log_file, 'r') as f:
+        log_entries = [json.loads(line) for line in f if line.strip()]
+        ticket_logs = [e for e in log_entries if e['ticket_id'] == ticket_id]
+
+    # Extract agent names
+    agent_names = [log['agent_name'] for log in ticket_logs]
+
+    # Should include classifier and supervisor_route at minimum
+    assert 'classifier' in agent_names, "Classifier should be logged"
+    assert 'supervisor_route' in agent_names, "Supervisor routing should be logged"
+
+    # Should include either resolver or escalation
+    assert any(name in agent_names for name in ['resolver', 'escalation']), \
+        "Either resolver or escalation should be logged"
+
+
+@pytest.mark.integration
+def test_logging_resolved_vs_escalated():
+    """Test that both resolved and escalated tickets are logged."""
+    import os
+    import json
+
+    log_file = "logs/agent_decisions.jsonl"
+
+    # Remove existing log file
+    if os.path.exists(log_file):
+        os.remove(log_file)
+
+    # Test resolved ticket
+    ticket_id_resolved = f"test_resolved_{uuid.uuid4().hex[:8]}"
+    result1 = process_ticket(
+        ticket_id=ticket_id_resolved,
+        user_message="How do I reserve an event?",
+        account_id="cultpass"
+    )
+
+    # Test escalated ticket (vague query)
+    ticket_id_escalated = f"test_escalated_{uuid.uuid4().hex[:8]}"
+    result2 = process_ticket(
+        ticket_id=ticket_id_escalated,
+        user_message="URGENT! Help me immediately with something unusual!",
+        account_id="cultpass"
+    )
+
+    # Read all log entries
+    with open(log_file, 'r') as f:
+        log_entries = [json.loads(line) for line in f if line.strip()]
+
+    # Get logs for each ticket
+    resolved_logs = [e for e in log_entries if e['ticket_id'] == ticket_id_resolved]
+    escalated_logs = [e for e in log_entries if e['ticket_id'] == ticket_id_escalated]
+
+    # Both should have log entries
+    assert len(resolved_logs) > 0, "Resolved ticket should have log entries"
+    assert len(escalated_logs) > 0, "Escalated ticket should have log entries"
+
+    # Check for specific agents
+    resolved_agents = [log['agent_name'] for log in resolved_logs]
+    escalated_agents = [log['agent_name'] for log in escalated_logs]
+
+    # Escalated ticket should include escalation agent
+    if result2['status'] == 'escalated':
+        assert 'escalation' in escalated_agents, "Escalation agent should be logged for escalated ticket"
+
+
+@pytest.mark.integration
+def test_logging_searchable_structure():
+    """Test that logs are structured and searchable."""
+    import os
+    import json
+
+    log_file = "logs/agent_decisions.jsonl"
+
+    # Remove existing log file
+    if os.path.exists(log_file):
+        os.remove(log_file)
+
+    ticket_id = f"test_{uuid.uuid4().hex[:8]}"
+    result = process_ticket(
+        ticket_id=ticket_id,
+        user_message="I need a refund",
+        account_id="cultpass"
+    )
+
+    # Read and verify log structure is searchable
+    with open(log_file, 'r') as f:
+        log_entries = [json.loads(line) for line in f if line.strip()]
+
+    # Filter logs by agent_name (searchable)
+    classifier_logs = [e for e in log_entries if e['agent_name'] == 'classifier']
+    assert len(classifier_logs) > 0, "Should be able to search by agent_name"
+
+    # Filter logs by ticket_id (searchable)
+    ticket_logs = [e for e in log_entries if e['ticket_id'] == ticket_id]
+    assert len(ticket_logs) > 0, "Should be able to search by ticket_id"
+
+    # Verify all entries have consistent structure
+    for entry in log_entries:
+        assert isinstance(entry['timestamp'], str)
+        assert isinstance(entry['agent_name'], str)
+        assert isinstance(entry['execution_time'], (int, float))
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-m", "integration"])
